@@ -1,0 +1,6 @@
+
+* Cabal Cheat Sheet
+    #+BEGIN_SRC sh
+    # Build and run
+    cabal run
+    #+END_SRC
