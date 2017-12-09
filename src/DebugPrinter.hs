@@ -7,16 +7,28 @@ import System.Console.ANSI
 
 import qualified PietLang as P
 
+--printProg :: P.PietProgram -> IO ()
+printProg P.PietProgram {P.codels=cs} = mapM_ printCodelRow cs
+  where
+    printCodelRow cs = do
+      mapM_ putCodelStr cs
+      putStrLn ""
+
 putCodelStr color = do
   setSGR [SetColor (ansiGround color) (ansiVividness color) (ansiColor color),
           SetUnderlining (ansiUnderline color)]
-  putStr "X"
+  putStr $ strToPrint color
   setSGR [Reset]
 
+strToPrint (P.Color _ light) = case light of
+                                 P.Light -> " "
+                                 P.Normal -> "N"
+                                 P.Dark -> "_"
+
 ansiGround (P.Color _ light) = case  light of
-               P.Light -> Foreground
+               P.Light -> Background
                P.Normal -> Foreground
-               P.Dark -> Background
+               P.Dark -> Foreground
 
 ansiColor (P.Color hue _) = case hue of
                             P.Red -> Red

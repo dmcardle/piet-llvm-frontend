@@ -1,6 +1,8 @@
 import qualified DebugPrinter as D
 import PietLang
 
+import System.Environment
+
 allPietHue :: [PietHue]
 allPietHue = [toEnum 0 ..]
 
@@ -13,5 +15,14 @@ printAllHues light = do
 
 printLegend = mapM_ printAllHues allPietLightness
 
-main = printLegend
+main = do
+  (filePath:args) <- getArgs
+
+  putStrLn "Legend:"
+  printLegend
+
+  putStrLn ""
+
+  pietProg <- translateImage $ filePath
+  D.printProg pietProg
 
