@@ -1,9 +1,16 @@
 import qualified View as V
 import Model
 
-allHues = [Red, Yellow, Green, Cyan, Blue, Magenta, Black, White]
-allLights = [Light, Normal, Dark]
+allPietHue :: [PietHue]
+allPietHue = [toEnum 0 ..]
+
+allPietLightness :: [PietLightness]
+allPietLightness = [toEnum 0 ..]
+
+printAllHues light = do
+  mapM_ V.putCodelStr [(Color hue light) | hue <- allPietHue]
+  putStrLn $ " (" ++ show light ++ ")"
 
 main = do
-	mapM_ V.printCodel [ (Color hue light) | hue <- allHues, light <- allLights ]
+  mapM_ printAllHues allPietLightness
 

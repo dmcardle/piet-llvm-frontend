@@ -3,14 +3,20 @@ module View where
 -- Module for visualizing Piet programs on the command line.
 --
 
-import System.Console.ANSI (SGR(Reset,SetColor), ConsoleLayer(Background,Foreground), ColorIntensity(Dull,Vivid), Color(Red, Yellow, Green, Blue, Cyan, Magenta, Black, White), setSGR)
+import System.Console.ANSI
 
 import qualified Model as M
 
-printCodel color = do
-  setSGR [SetColor (ansiGround color) (ansiVividness color) (ansiColor color)]
-  putStrLn "X"
+putCodelStr color = do
+  setSGR [SetColor (ansiGround color) (ansiVividness color) (ansiColor color),
+          SetUnderlining (ansiUnderline color)]
+  putStr "X"
   setSGR [Reset]
+
+ansiGround (M.Color _ light) = case  light of
+               M.Light -> Foreground
+               M.Normal -> Foreground
+               M.Dark -> Background
 
 ansiColor (M.Color hue _) = case hue of
                             M.Red -> Red
@@ -21,12 +27,12 @@ ansiColor (M.Color hue _) = case hue of
                             M.Magenta -> Magenta
                             M.Black -> Black
                             M.White -> White
-ansiGround (M.Color _ light) = case  light of
-               M.Light -> Foreground
-               M.Normal -> Foreground
-               M.Dark -> Background
 
 ansiVividness (M.Color _ light) = case light of
-               M.Light -> Vivid 
+               M.Light -> Vivid
                M.Normal -> Dull
                M.Dark -> Dull
+
+ansiUnderline (M.Color _ light) = case light of
+                                    M.Light -> SingleUnderline
+                                    _ -> NoUnderline
