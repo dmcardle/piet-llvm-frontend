@@ -1,5 +1,6 @@
 import qualified DebugPrinter as D
 import PietLang
+import ImageLoader
 
 import System.Environment
 

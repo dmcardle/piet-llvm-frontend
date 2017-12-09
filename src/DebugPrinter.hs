@@ -3,50 +3,53 @@ module DebugPrinter where
 -- Module for visualizing Piet programs on the command line.
 --
 
-import System.Console.ANSI
+import qualified System.Console.ANSI as A
 
-import qualified PietLang as P
+import PietLang
+import ImageLoader
 
---printProg :: P.PietProgram -> IO ()
-printProg P.PietProgram {P.codels=cs} = mapM_ printCodelRow cs
+--printProg :: PietProgram -> IO ()
+printProg PietProgram {codels=cs} = mapM_ printCodelRow cs
   where
     printCodelRow cs = do
       mapM_ putCodelStr cs
       putStrLn ""
 
 putCodelStr color = do
-  setSGR [SetColor (ansiGround color) (ansiVividness color) (ansiColor color),
-          SetUnderlining (ansiUnderline color)]
+  A.setSGR [A.SetColor (ansiGround color)
+             (ansiVividness color)
+             (ansiColor color),
+            A.SetUnderlining (ansiUnderline color)]
   putStr $ strToPrint color
-  setSGR [Reset]
+  A.setSGR [A.Reset]
 
-strToPrint (P.Color _ light) = case light of
-                                 P.Light -> " "
-                                 P.Normal -> "N"
-                                 P.Dark -> "_"
+strToPrint (Color _ light) = case light of
+                                 Light -> " "
+                                 Normal -> "N"
+                                 Dark -> "_"
 
-ansiGround (P.Color _ light) = case  light of
-               P.Light -> Background
-               P.Normal -> Foreground
-               P.Dark -> Foreground
+ansiGround (Color _ light) = case  light of
+               Light -> A.Background
+               Normal -> A.Foreground
+               Dark -> A.Foreground
 
-ansiColor (P.Color hue _) = case hue of
-                            P.Red -> Red
-                            P.Yellow -> Yellow
-                            P.Green -> Green
-                            P.Cyan -> Cyan
-                            P.Blue -> Blue
-                            P.Magenta -> Magenta
-                            P.Black -> Black
-                            P.White -> White
+ansiColor (Color hue _) = case hue of
+                            Red -> A.Red
+                            Yellow -> A.Yellow
+                            Green -> A.Green
+                            Cyan -> A.Cyan
+                            Blue -> A.Blue
+                            Magenta -> A.Magenta
+                            Black -> A.Black
+                            White -> A.White
 
-ansiVividness (P.Color _ light) =
+ansiVividness (Color _ light) =
   case light of
-    P.Light -> Vivid
-    P.Normal -> Dull
-    P.Dark -> Dull
+    Light -> A.Vivid
+    Normal -> A.Dull
+    Dark -> A.Dull
 
-ansiUnderline (P.Color _ light) =
+ansiUnderline (Color _ light) =
   case light of
-    P.Light -> SingleUnderline
-    _ -> NoUnderline
+    Light -> A.SingleUnderline
+    _ -> A.NoUnderline
