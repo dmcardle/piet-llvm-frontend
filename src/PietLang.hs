@@ -3,11 +3,14 @@ module PietLang where
 import ImageLoader
 
 import Data.Maybe
-import Data.List (nub)
+import Data.List (nub, sort)
 import Debug.Trace
 
 type ColorBlockId = Int
 type ColorBlockConn = Maybe ColorBlockId
+
+data PietDirPointer = DP_Left | DP_Right | DP_Up | DP_Down deriving (Eq, Enum, Show)
+data PietCodelChooser = CC_Left | CC_Right deriving (Eq, Enum, Show)
 
 -- The raw color block resembles tokens in a traditional programming language.
 data RawColorBlock = RawColorBlock { bid :: ColorBlockId,
@@ -18,51 +21,62 @@ data RawColorBlock = RawColorBlock { bid :: ColorBlockId,
   deriving (Eq, Show)
 
 -- The abstract color block resembles an Abstract Syntax Tree.
-data AbsColorBlock = AbsColorBlock { raw :: RawColorBlock,
-                                     dp_r_cc_l :: ColorBlockId,
-                                     dp_r_cc_r :: ColorBlockId,
-                                     dp_d_cc_l :: ColorBlockId,
-                                     dp_d_cc_r :: ColorBlockId,
-                                     dp_l_cc_l :: ColorBlockId,
-                                     dp_l_cc_r :: ColorBlockId,
-                                     dp_u_cc_l :: ColorBlockId,
-                                     dp_u_cc_r :: ColorBlockId
+data AbsColorBlock = AbsColorBlock { rawBlock :: RawColorBlock,
+                                     -- no point in making this a function since it must be exhaustive
+                                     nextBlockLookup :: [(PietDirPointer, PietCodelChooser, ColorBlockId)]
                                    }
   deriving (Eq, Show)
 
-nullRawColorBlock = RawColorBlock { bid=0,
-                                    color=Color Black Normal,
-                                    size=0,
-                                    members=[]
-                                  }
+enumAll :: (Enum a) => [a]
+enumAll = [toEnum 0 ..]
 
-nullAbsColorBlock = AbsColorBlock { raw=nullRawColorBlock,
-                      dp_r_cc_l=0,
-                      dp_r_cc_r=0,
-                      dp_d_cc_l=0,
-                      dp_d_cc_r=0,
-                      dp_l_cc_l=0,
-                      dp_l_cc_r=0,
-                      dp_u_cc_l=0,
-                      dp_u_cc_r=0
-                    }
+-- Parse a list of RawColorBlocks into a syntax tree.
+--
+parse :: [RawColorBlock] -> [AbsColorBlock]
+parse rs = map buildAbsBlock rs
+  where
+    buildAbsBlock r = AbsColorBlock {rawBlock=r, nextBlockLookup=buildLookup r}
+    buildLookup r = [(dp, cc, findBlockFor dp cc $ chooseCodel cc $ getEdge dp)
+                    | dp <- enumAll, cc <- enumAll]
 
-nullProgram = PietProgram {codels = [], width = 0, height = 0}
+      where
+        pts = members r
+        uniqX = nub $ sort $ map fst pts
+        uniqY = nub $ sort $ map snd pts
+        filterX v = [(x,y) | (x,y) <- pts, x==v]
+        filterY v = [(x,y) | (x,y) <- pts, y==v]
 
-testProgram = PietProgram {codels = [[Color Red Normal,
-                                      Color Red Normal,
-                                      Color Red Light],
-                                     [Color Black Normal,
-                                      Color Blue Light,
-                                      Color Blue Light]],
-                           width=3,
-                           height=2}
+        getEdge :: PietDirPointer -> [(Int, Int)]
+        getEdge DP_Right = [ maximum (filterX x) | x <- uniqX ]
+        getEdge DP_Down  = [ maximum (filterY y) | y <- uniqY ]
+        getEdge DP_Left  = [ minimum (filterY y) | y <- uniqY ]
+        getEdge DP_Up    = [ minimum (filterX x) | x <- uniqX ]
+
+        -- This function implements part of the behavior described in the
+        -- "Program Execution" section of the Piet language specification.
+        findBlockFor :: PietDirPointer -> PietCodelChooser -> (Int, Int) -> ColorBlockId
+        findBlockFor dp cc (x,y) = case dp of
+                                     DP_Right -> blockAt (x+1, y)
+                                     DP_Down  -> blockAt (x, y+1)
+                                     DP_Left  -> blockAt (x-1, y)
+                                     DP_Up    -> blockAt (x, y-1)
+
+        -- Find the id of the ColorBlock that contains the given point.
+        blockAt :: (Int, Int) -> ColorBlockId
+        blockAt pt = case filter ((elem pt).members) rs of
+          (b:_) -> bid b
+          [] -> bid blackBorderColorBlock
+
+        chooseCodel :: PietCodelChooser -> ([a] -> a)
+        chooseCodel CC_Left = head
+        chooseCodel CC_Right = last
 
 -- Groups 4-connected components in the 2D matrix of codels into RawColorBlocks.
 -- Also assigns names to the blocks for ease of debugging.
 lexProg :: PietProgram -> [(Int,Int)] -> [RawColorBlock]
-lexProg p@(PietProgram {codels=c, width=w, height=h}) visited = buildBlocks (enumCoords w h) [] 0
+lexProg p@(PietProgram {codels=c, width=w, height=h}) visited = buildBlocks (enumCoords w h) [] 1
   where
+    -- Count starts at 1 because of the surrounding black border.
     buildBlocks [] _ _ = []
     buildBlocks ((x,y):xys) seen cnt
       -- If the point is already used by another block, continue processing
@@ -95,9 +109,32 @@ colorAt PietProgram{codels=cs, width=w, height=h} (x,y)
   | y < 0 || y >= h = Color Black Normal
   | otherwise = (cs !! y) !! x
 
--- Parse a list of RawColorBlocks into a syntax tree.
---
-parse :: [RawColorBlock] -> [AbsColorBlock]
-parse rs = map buildNeighbors rs
-  where
-    buildNeighbors r = nullAbsColorBlock
+--------------------------------------------------------------------------------
+-- Examples
+--------------------------------------------------------------------------------
+
+blackBorderColorBlock = RawColorBlock { bid=0,
+                                        color=Color Black Normal,
+                                        size=0,
+                                        members = []}
+
+nullRawColorBlock = RawColorBlock { bid=0,
+                                    color=Color Black Normal,
+                                    size=0,
+                                    members=[]
+                                  }
+
+nullAbsColorBlock = AbsColorBlock { rawBlock = nullRawColorBlock,
+                                    nextBlockLookup = []
+                                  }
+
+nullProgram = PietProgram {codels = [], width = 0, height = 0}
+
+testProgram = PietProgram {codels = [[Color Red Normal,
+                                      Color Red Normal,
+                                      Color Red Light],
+                                     [Color Black Normal,
+                                      Color Blue Light,
+                                      Color Blue Light]],
+                           width=3,
+                           height=2}
