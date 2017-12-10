@@ -26,4 +26,6 @@ main = do
 
   pietProg <- translateImage $ filePath
   D.printProg pietProg
+  putStrLn $ show $ lexProg pietProg []
+
 

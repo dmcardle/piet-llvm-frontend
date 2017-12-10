@@ -1,13 +1,14 @@
 * The Plan
 ** Lexer
    Read color blocks from file.
-*** TODO Write image reader
+*** DONE Write image reader
 *** TODO Write block lexer
 ** Parser
    Create AST from color blocks, high-level representation of operations
    performed at transitions between color blocks.
 ** Codegen
    Emit an LLVM IR function for each color block.
+   
 
 * Cabal Cheat Sheet
     #+BEGIN_SRC sh
