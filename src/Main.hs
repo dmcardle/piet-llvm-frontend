@@ -1,6 +1,7 @@
 import qualified DebugPrinter as D
 import PietLang
 import ImageLoader
+import Codegen
 
 import System.Environment
 
@@ -27,6 +28,5 @@ main = do
   pietProg <- translateImage $ filePath
   D.printProg pietProg
 
-  putStrLn $ show $ parse $ lexProg pietProg []
-
-
+  let colorBlocks = parse $ lexProg pietProg []
+  toLLVM colorBlocks

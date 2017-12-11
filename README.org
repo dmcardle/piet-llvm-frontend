@@ -2,10 +2,14 @@
 ** Lexer
    Read color blocks from file.
 *** DONE Write image reader
-*** TODO Write block lexer
+*** DONE Write block lexer
 ** Parser
    Create AST from color blocks, high-level representation of operations
    performed at transitions between color blocks.
+*** TODO Resolve white block problem
+    Unlike other colors of blocks, white block behavior is dependent on the
+    actual cursor coordinates. Luckily, this behavior can be determined at
+    compile time!
 ** Codegen
    Emit an LLVM IR function for each color block.
    
