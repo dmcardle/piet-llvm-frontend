@@ -9,11 +9,11 @@ import PietLang
 
 import LLVM.Prelude
 import LLVM.AST
-import qualified LLVM.AST as AST
 import LLVM.AST.Global
+import qualified LLVM.AST.InlineAssembly as ASM
 import qualified LLVM.AST.CallingConvention as CC
 import LLVM.Context
-import LLVM.Module
+import LLVM.Module as M
 import qualified LLVM.AST.Constant as Const
 import qualified LLVM.AST.Type as T
 
@@ -47,40 +47,14 @@ defColorBlock c = GlobalDefinition functionDefaults
                 []]
         (Do $ Ret (Just (LocalReference int (Name "result"))) [])
 
-defMain :: Operand -> Definition
-defMain fn = GlobalDefinition functionDefaults
-  { name = Name "main"
-  , parameters = ([], False)
-  , returnType = int
-  , basicBlocks = [body]
-  }
-  where
-    body = BasicBlock
-           (Name "entry")
-           [ Do $ Call Nothing CC.C [] (Right fn) [] [] [] ]
-           (Do $ Ret (Just (ConstantOperand $ Const.Int 0 0)) [])
-
-createModule :: [AbsColorBlock] -> AST.Module
+createModule :: [AbsColorBlock] -> LLVM.AST.Module
 createModule blocks@(firstBlock:_) = defaultModule
   { moduleName = "basic"
-  , moduleDefinitions = [defColorBlock b | b <- blocks] ++ [irMain]
+  , moduleDefinitions = map defColorBlock blocks
   }
-  where
-    irBlockFuncs = [defColorBlock b | b <- blocks]
-
-    firstBlockRef :: Operand
-    firstBlockRef = ConstantOperand $ Const.GlobalReference
-                    (T.FunctionType
-                      T.IntegerType{typeBits=32} [
-                        IntegerType {typeBits = 32},
-                          IntegerType {typeBits = 32}]
-                      False)
-                    (Name "colorBlock1")
-
-    irMain = defMain firstBlockRef
 
 toLLVM :: [AbsColorBlock]-> IO ()
 toLLVM colorBlocks = withContext $ \ctx -> do
   let mod = createModule colorBlocks
   llvm <- withModuleFromAST ctx mod moduleLLVMAssembly
-  writeFile "out.ll" (BC.unpack llvm)
+  writeFile "colorblocks.ll" (BC.unpack llvm)
