@@ -7,6 +7,8 @@ import PietLang
 -- Codegen takes a list of abstract color blocks and emits LLVM IR code.
 -- Global state in the emitted code will include the DP and CC.
 
+import Data.Word
+
 import LLVM.Prelude
 import LLVM.AST
 import LLVM.AST.Global
@@ -31,28 +33,54 @@ int = IntegerType 32
 concatAsName :: [String] -> Name
 concatAsName xs = Name (BS.toShort $ B.concat $ map BC.pack xs)
 
+colorBlockName :: String -> Name
+colorBlockName blockId = concatAsName ["ColorBlock", blockId]
+
+colorBlockParams = ( [ Parameter (T.ptr T.i32) (Name "stackptr") []
+                     , Parameter T.i8 (Name "dp") []
+                     , Parameter T.i8 (Name "cc") []
+                     ]
+                   , False )
+
+globalPersonalityFunc = Const.GlobalReference (T.ptr (T.FunctionType T.VoidType [] False)) (Name "catchExc")
+
+-- Define the exception handler
+defCatchExc :: Definition
+defCatchExc = GlobalDefinition functionDefaults
+  { name = Name "catchExc"
+  , parameters = ([], False)
+  , returnType = T.VoidType
+  , basicBlocks = [BasicBlock (Name "done") [] (Do $ Ret Nothing [])]
+  }
+
+-- Define the special black border. The block's number is agreed to be 0.
+defBlackBorder :: Definition
+defBlackBorder = GlobalDefinition functionDefaults
+  { name = colorBlockName "0"
+  , personalityFunction = Just globalPersonalityFunc
+  , parameters = colorBlockParams
+  , returnType = T.VoidType
+  , basicBlocks = [BasicBlock (Name "done") [] (Do $ Ret Nothing [])]
+  }
+
 defColorBlock :: AbsColorBlock -> Definition
 defColorBlock c = GlobalDefinition functionDefaults
-  { name = makeFuncName colorBlockId
-  , parameters =
-      ( [
-          Parameter (T.ptr T.i32) (Name "stackptr") []
-        , Parameter T.i8 (Name "dp") []
-        , Parameter T.i8 (Name "cc") []
-        ]
-      , False )
-  , returnType = int
-  , basicBlocks = setupBasicBlocks ++ (createConditionals 1 (nextBlockLookup c)) ++ exitBlocks
+  { name = colorBlockName colorBlockId
+  , personalityFunction = Just globalPersonalityFunc
+  , parameters = colorBlockParams
+  , returnType = T.VoidType
+  , basicBlocks = concat [setupBasicBlocks
+                         ,(createConditionals 1 (nextBlockLookup c))
+                         ,exitBlocks]
   }
   where
-    makeFuncName blockId = concatAsName ["ColorBlock", show blockId]
-
     colorBlockId :: String
     colorBlockId = show $ bid $ rawBlock c
 
     --i8Var :: String -> Operand
     i8Var name = LocalReference T.i8 (Name name)
 
+    stackptrVar = i8Var "stackptr"
     dpVar = i8Var "dp"
     ccVar = i8Var "cc"
     comboVar = i8Var "combo"
@@ -76,47 +104,47 @@ defColorBlock c = GlobalDefinition functionDefaults
       where
         expectedComboVal = 2*(fromEnum dp) + (fromEnum cc)
         expectedComboVar = concatAsName $ ["combo_is_", show expectedComboVal]
+
+        nextCondName
+          | xs == [] = Name "exit_normal"
+          | otherwise = concatAsName ["decide", show (n+1)]
+
         newBasicBlocks = [
           BasicBlock (concatAsName ["decide", show n])
             [
               expectedComboVar := ICmp IntPred.EQ comboVar (ConstantOperand (Const.Int 8 0)) []
             ]
-            (Do $ CondBr (LocalReference T.i8 expectedComboVar) (concatAsName ["handle", show expectedComboVal]) (concatAsName ["decide", (show (n+1))]) [])
+            (Do $ CondBr (LocalReference T.i8 expectedComboVar) (concatAsName ["handle", show expectedComboVal]) nextCondName [])
           ,
           BasicBlock (concatAsName ["handle", show expectedComboVal])
             []
             (Do $ Invoke {
-                callingConvention'=CC.Fast
+                callingConvention'=CC.C
                 ,returnAttributes'=[]
-                ,function'=(Right $ ConstantOperand $ Const.GlobalReference (T.FunctionType T.VoidType [T.i8, T.i8, T.i8] False) (makeFuncName $ show blk))
-                ,arguments'=[]
+                ,function'=(Right $ ConstantOperand $ Const.GlobalReference (T.ptr (T.FunctionType T.VoidType [(T.ptr T.i32), T.i8, T.i8] False)) (colorBlockName $ show blk))
+                ,arguments'=[ (p,[]) | p<-[stackptrVar, dpVar, ccVar]]
                 ,functionAttributes'=[]
                 ,returnDest=concatAsName ["exit_normal"]
-                ,exceptionDest=concatAsName ["exit_exception"]
+                ,exceptionDest=concatAsName ["catch_exception"]
                 ,metadata'=[]
                 })
           ]
 
     exitBlocks :: [BasicBlock]
     exitBlocks = [
-          BasicBlock (concatAsName ["exit_normal"])
+          BasicBlock (concatAsName ["catch_exception"])
             []
-            (Do $ Ret Nothing []),
-          BasicBlock (concatAsName ["exit_exception"])
+            (Do $ Resume (ConstantOperand Const.TokenNone) []),
+          BasicBlock (concatAsName ["exit_normal"])
             []
             (Do $ Ret Nothing [])
           ]
 
-
-
-
 createModule :: [AbsColorBlock] -> LLVM.AST.Module
 createModule blocks@(firstBlock:_) = defaultModule
   { moduleName = "basic"
-  , moduleDefinitions = forwardDeclarations ++ map defColorBlock blocks
+  , moduleDefinitions = [defCatchExc, defBlackBorder] ++ map defColorBlock blocks
   }
-  where
-    forwardDeclarations = []
 
 toLLVM :: [AbsColorBlock]-> IO ()
 toLLVM colorBlocks = withContext $ \ctx -> do

@@ -109,14 +109,19 @@ colorAt PietProgram{codels=cs, width=w, height=h} (x,y)
   | y < 0 || y >= h = Color Black Normal
   | otherwise = (cs !! y) !! x
 
---------------------------------------------------------------------------------
--- Examples
---------------------------------------------------------------------------------
 
+-- The ID of the black border is used to define the empty void surrounding the
+-- Piet program.
 blackBorderColorBlock = RawColorBlock { bid=0,
                                         color=Color Black Normal,
                                         size=0,
                                         members = []}
+
+blackBorderAbsBlock = AbsColorBlock {rawBlock=blackBorderColorBlock, nextBlockLookup=[]}
+
+--------------------------------------------------------------------------------
+-- Examples
+--------------------------------------------------------------------------------
 
 nullRawColorBlock = RawColorBlock { bid=0,
                                     color=Color Black Normal,
