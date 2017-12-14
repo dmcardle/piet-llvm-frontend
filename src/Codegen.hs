@@ -8,6 +8,7 @@ import PietLang
 -- Global state in the emitted code will include the DP and CC.
 
 import Data.Word
+import Data.Char (ord)
 
 import LLVM.Prelude
 import LLVM.AST
@@ -43,6 +44,9 @@ colorBlockParams = ( [ Parameter (T.ptr T.i32) (Name "stackptr") []
                    , False )
 
 globalPersonalityFunc = Const.GlobalReference (T.ptr (T.FunctionType T.VoidType [] False)) (Name "catchExc")
+
+defPrintf :: Definition
+defPrintf = GlobalDefinition functionDefaults {name="printf", parameters=([Parameter (T.ptr T.i8) (Name "formatstring") []], True), returnType=T.i32}
 
 -- Define the exception handler
 defCatchExc :: Definition
@@ -87,6 +91,18 @@ defColorBlock c = GlobalDefinition functionDefaults
 
     setupBasicBlocks :: [BasicBlock]
     setupBasicBlocks = [
+      BasicBlock (Name "debug_printer")
+        []
+        (Do $ Invoke {
+            callingConvention'=CC.C
+            ,returnAttributes'=[]
+            ,function'=(Right $ ConstantOperand $ Const.GlobalReference (T.ptr (T.FunctionType T.i32 [(T.ptr T.i8)] True)) (Name "printf"))
+            ,arguments'=[ (ConstantOperand $ Const.Array T.i8 [Const.Int {Const.integerBits=8, Const.integerValue=toInteger (ord c)} | c<-"hello"], []) ]
+            ,functionAttributes'=[]
+            ,returnDest=concatAsName ["exit_normal"]
+            ,exceptionDest=concatAsName ["catch_exception"]
+            ,metadata'=[]
+            }),
       BasicBlock (concatAsName ["set_vars", colorBlockId])
         [
           -- Make room for the CC value in combo
@@ -143,7 +159,7 @@ defColorBlock c = GlobalDefinition functionDefaults
 createModule :: [AbsColorBlock] -> LLVM.AST.Module
 createModule blocks@(firstBlock:_) = defaultModule
   { moduleName = "basic"
-  , moduleDefinitions = [defCatchExc, defBlackBorder] ++ map defColorBlock blocks
+  , moduleDefinitions =  [defPrintf, defCatchExc, defBlackBorder] ++ map defColorBlock blocks
   }
 
 toLLVM :: [AbsColorBlock]-> IO ()
