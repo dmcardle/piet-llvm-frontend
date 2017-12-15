@@ -16,6 +16,7 @@ import LLVM.Module
 import LLVM.Analysis
 import LLVM.AST
 import LLVM.AST.Global hiding (callingConvention, returnAttributes, functionAttributes)
+import LLVM.AST.AddrSpace
 import qualified LLVM.AST.InlineAssembly as ASM
 import qualified LLVM.AST.CallingConvention as CC
 import LLVM.Context
@@ -29,7 +30,8 @@ import Control.Monad.Except
 import qualified Data.ByteString       as B
 import qualified Data.ByteString.Short as BS
 import qualified Data.ByteString.Char8 as BC
---import qualified Data.ByteString.Short as B.Short
+
+  --import qualified Data.ByteString.Short as B.Short
 
 int :: Type
 int = IntegerType 32
@@ -47,6 +49,26 @@ colorBlockParams = ( [ Parameter (T.ptr T.i32) (Name "stackptr") []
                    , False )
 
 globalPersonalityFunc = Const.GlobalReference (T.ptr (T.FunctionType T.VoidType [] False)) (Name "catchExc")
+
+funcTableTy = (PointerType {pointerReferent = PointerType {pointerReferent = FunctionType {resultType = VoidType, argumentTypes = [PointerType {pointerReferent = IntegerType {typeBits = 32}, pointerAddrSpace = AddrSpace 0},IntegerType {typeBits = 8},IntegerType {typeBits = 8}], isVarArg = False}, pointerAddrSpace = AddrSpace 0}, pointerAddrSpace = AddrSpace 0})
+
+defNextBlockFunc :: Definition
+defNextBlockFunc = GlobalDefinition functionDefaults
+  { name = Name "nextBlock"
+  , linkage = L.External
+  , parameters = ([ Parameter (T.ptr T.i32) (Name "stackPtr") []
+                   , Parameter T.i8 (Name "dp") []
+                   , Parameter T.i8 (Name "cc") []
+                   , Parameter funcTableTy (Name "funcTable") []
+                   , Parameter T.i32 (Name "combo") []
+                   , Parameter T.i32 (Name "oldHue") []
+                   , Parameter T.i32 (Name "oldLightness") []
+                   , Parameter T.i32 (Name "newHue") []
+                   , Parameter T.i32 (Name "newLightness") []
+                   , Parameter T.i32 (Name "curBlockNum") []
+                   ], False)
+  , returnType = T.VoidType
+  }
 
 -- Define the exception handler
 defCatchExc :: Definition
@@ -92,6 +114,7 @@ defColorBlock c = GlobalDefinition functionDefaults
     ccVar = i8Var "cc"
     comboVar = i8Var "combo"
 
+
     setupBasicBlocks :: [BasicBlock]
     setupBasicBlocks = [
       BasicBlock (concatAsName ["set_vars", colorBlockId])
@@ -100,7 +123,24 @@ defColorBlock c = GlobalDefinition functionDefaults
           Name "dpShift" := Shl True True dpVar (ConstantOperand (Const.Int 8 1)) [],
           Name "combo" := Add True True (i8Var "dpShift") ccVar []
           ]
-        (Do $ Br (concatAsName ["decide", show 1]) [])
+        (Do $ Br (Name "perform_action") []),
+
+      BasicBlock (Name "perform_action")
+        [Do $ Call {
+            tailCallKind=Nothing
+            , callingConvention=CC.C
+            ,returnAttributes=[]
+            ,function=(Right $
+                        ConstantOperand $
+                        Const.GlobalReference
+                        (T.ptr
+                         (T.FunctionType T.VoidType
+                          ([(T.ptr T.i32), T.i8, T.i8, funcTableTy] ++ (replicate 6 T.i32)) False)) (Name "nextBlock"))
+            ,arguments=[(p,[]) | p<-[stackptrVar, dpVar, ccVar]] ++ [(ConstantOperand (Const.Null funcTableTy), [])] ++ replicate 6 ((ConstantOperand $ Const.Int 32 0),[])
+            ,functionAttributes=[]
+            ,metadata=[]
+            }]
+        (Do $ Br (Name "decide1") [])
       ]
 
     -- Create a list of LLVM basic blocks that implement this color block's
@@ -149,7 +189,7 @@ defColorBlock c = GlobalDefinition functionDefaults
 createModule :: [AbsColorBlock] -> LLVM.AST.Module
 createModule blocks@(firstBlock:_) = defaultModule
   { moduleName = "basic"
-  , moduleDefinitions =  [defCatchExc, defBlackBorder] ++ map defColorBlock blocks
+  , moduleDefinitions =  [defCatchExc, defNextBlockFunc, defBlackBorder] ++ map defColorBlock blocks
   }
 
 toLLVM :: [AbsColorBlock]-> IO ()
