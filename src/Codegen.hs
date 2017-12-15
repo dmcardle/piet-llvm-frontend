@@ -7,13 +7,15 @@ import PietLang
 -- Codegen takes a list of abstract color blocks and emits LLVM IR code.
 -- Global state in the emitted code will include the DP and CC.
 
+import Control.Monad.Except
 import Data.Word
 import Data.Char (ord)
 
 import LLVM.Prelude
 import LLVM.Module
+import LLVM.Analysis
 import LLVM.AST
-import LLVM.AST.Global
+import LLVM.AST.Global hiding (callingConvention, returnAttributes, functionAttributes)
 import qualified LLVM.AST.InlineAssembly as ASM
 import qualified LLVM.AST.CallingConvention as CC
 import LLVM.Context
@@ -21,6 +23,7 @@ import qualified LLVM.AST.Constant as Const
 import qualified LLVM.AST.Type as T
 import qualified LLVM.AST.Operand as Oper
 import qualified LLVM.AST.IntegerPredicate as IntPred
+import qualified LLVM.AST.Linkage as L
 
 import Control.Monad.Except
 import qualified Data.ByteString       as B
@@ -45,13 +48,11 @@ colorBlockParams = ( [ Parameter (T.ptr T.i32) (Name "stackptr") []
 
 globalPersonalityFunc = Const.GlobalReference (T.ptr (T.FunctionType T.VoidType [] False)) (Name "catchExc")
 
-defPrintf :: Definition
-defPrintf = GlobalDefinition functionDefaults {name="printf", parameters=([Parameter (T.ptr T.i8) (Name "formatstring") []], True), returnType=T.i32}
-
 -- Define the exception handler
 defCatchExc :: Definition
 defCatchExc = GlobalDefinition functionDefaults
   { name = Name "catchExc"
+  , linkage = L.Internal
   , parameters = ([], False)
   , returnType = T.VoidType
   , basicBlocks = [BasicBlock (Name "done") [] (Do $ Ret Nothing [])]
@@ -61,6 +62,7 @@ defCatchExc = GlobalDefinition functionDefaults
 defBlackBorder :: Definition
 defBlackBorder = GlobalDefinition functionDefaults
   { name = colorBlockName "0"
+  , linkage = L.LinkOnce
   , personalityFunction = Just globalPersonalityFunc
   , parameters = colorBlockParams
   , returnType = T.VoidType
@@ -70,6 +72,7 @@ defBlackBorder = GlobalDefinition functionDefaults
 defColorBlock :: AbsColorBlock -> Definition
 defColorBlock c = GlobalDefinition functionDefaults
   { name = colorBlockName colorBlockId
+  , linkage = L.LinkOnce
   , personalityFunction = Just globalPersonalityFunc
   , parameters = colorBlockParams
   , returnType = T.VoidType
@@ -91,18 +94,6 @@ defColorBlock c = GlobalDefinition functionDefaults
 
     setupBasicBlocks :: [BasicBlock]
     setupBasicBlocks = [
-      BasicBlock (Name "debug_printer")
-        []
-        (Do $ Invoke {
-            callingConvention'=CC.C
-            ,returnAttributes'=[]
-            ,function'=(Right $ ConstantOperand $ Const.GlobalReference (T.ptr (T.FunctionType T.i32 [(T.ptr T.i8)] True)) (Name "printf"))
-            ,arguments'=[ (ConstantOperand $ Const.Array T.i8 [Const.Int {Const.integerBits=8, Const.integerValue=toInteger (ord c)} | c<-"hello"], []) ]
-            ,functionAttributes'=[]
-            ,returnDest=concatAsName ["exit_normal"]
-            ,exceptionDest=concatAsName ["catch_exception"]
-            ,metadata'=[]
-            }),
       BasicBlock (concatAsName ["set_vars", colorBlockId])
         [
           -- Make room for the CC value in combo
@@ -133,17 +124,16 @@ defColorBlock c = GlobalDefinition functionDefaults
             (Do $ CondBr (LocalReference T.i8 expectedComboVar) (concatAsName ["handle", show expectedComboVal]) nextCondName [])
           ,
           BasicBlock (concatAsName ["handle", show expectedComboVal])
-            []
-            (Do $ Invoke {
-                callingConvention'=CC.C
-                ,returnAttributes'=[]
-                ,function'=(Right $ ConstantOperand $ Const.GlobalReference (T.ptr (T.FunctionType T.VoidType [(T.ptr T.i32), T.i8, T.i8] False)) (colorBlockName $ show blk))
-                ,arguments'=[ (p,[]) | p<-[stackptrVar, dpVar, ccVar]]
-                ,functionAttributes'=[]
-                ,returnDest=concatAsName ["exit_normal"]
-                ,exceptionDest=concatAsName ["catch_exception"]
-                ,metadata'=[]
-                })
+            [Do $ Call {
+                tailCallKind=Just MustTail
+                , callingConvention=CC.C
+                ,returnAttributes=[]
+                ,function=(Right $ ConstantOperand $ Const.GlobalReference (T.ptr (T.FunctionType T.VoidType [(T.ptr T.i32), T.i8, T.i8] False)) (colorBlockName $ show blk))
+                ,arguments=[(p,[]) | p<-[stackptrVar, dpVar, ccVar]]
+                ,functionAttributes=[]
+                ,metadata=[]
+                }]
+            (Do $ Ret Nothing [])
           ]
 
     exitBlocks :: [BasicBlock]
@@ -163,19 +153,12 @@ createModule blocks@(firstBlock:_) = defaultModule
   }
 
 toLLVM :: [AbsColorBlock]-> IO ()
-toLLVM colorBlocks = withContext $ \ctx -> do
-  -- Obtain a Module containing our color block implementations
-  let colorBlocksModA = createModule colorBlocks
-  colorBlocksMod <- withModuleFromAST ctx colorBlocksModA (\m -> return m) 
+toLLVM colorBlocks = do
+  withContext $ \ctx -> do
+    let colorBlocksModA = createModule colorBlocks
+    colorBlocksAsm <- withModuleFromAST ctx colorBlocksModA (\m -> do
+                                                                verify m
+                                                                asm <- moduleLLVMAssembly m
+                                                                return $ asm)
 
-
-  -- Obtain a Module for pietlib
-  pietlibStr <- readFile "src/pietlib/pietlib.ll"
-  withModuleFromLLVMAssembly ctx pietlibStr (linkModules colorBlocksMod)
-
-  -- Link pietlib INTO the color blocks
-  --linkModules colorBlocksMod pietLibMod
-
-  asm <- moduleLLVMAssembly colorBlocksMod
-
-  writeFile "colorblocks.ll" (BC.unpack asm)
+    writeFile "colorblocks.ll" (BC.unpack colorBlocksAsm)
