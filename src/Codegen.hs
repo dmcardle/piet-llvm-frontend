@@ -11,12 +11,12 @@ import Data.Word
 import Data.Char (ord)
 
 import LLVM.Prelude
+import LLVM.Module
 import LLVM.AST
 import LLVM.AST.Global
 import qualified LLVM.AST.InlineAssembly as ASM
 import qualified LLVM.AST.CallingConvention as CC
 import LLVM.Context
-import LLVM.Module as M
 import qualified LLVM.AST.Constant as Const
 import qualified LLVM.AST.Type as T
 import qualified LLVM.AST.Operand as Oper
@@ -159,11 +159,23 @@ defColorBlock c = GlobalDefinition functionDefaults
 createModule :: [AbsColorBlock] -> LLVM.AST.Module
 createModule blocks@(firstBlock:_) = defaultModule
   { moduleName = "basic"
-  , moduleDefinitions =  [defPrintf, defCatchExc, defBlackBorder] ++ map defColorBlock blocks
+  , moduleDefinitions =  [defCatchExc, defBlackBorder] ++ map defColorBlock blocks
   }
 
 toLLVM :: [AbsColorBlock]-> IO ()
 toLLVM colorBlocks = withContext $ \ctx -> do
-  let mod = createModule colorBlocks
-  llvm <- withModuleFromAST ctx mod moduleLLVMAssembly
-  writeFile "colorblocks.ll" (BC.unpack llvm)
+  -- Obtain a Module containing our color block implementations
+  let colorBlocksModA = createModule colorBlocks
+  colorBlocksMod <- withModuleFromAST ctx colorBlocksModA (\m -> return m) 
+
+
+  -- Obtain a Module for pietlib
+  pietlibStr <- readFile "src/pietlib/pietlib.ll"
+  withModuleFromLLVMAssembly ctx pietlibStr (linkModules colorBlocksMod)
+
+  -- Link pietlib INTO the color blocks
+  --linkModules colorBlocksMod pietLibMod
+
+  asm <- moduleLLVMAssembly colorBlocksMod
+
+  writeFile "colorblocks.ll" (BC.unpack asm)
