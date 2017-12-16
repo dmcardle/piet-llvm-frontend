@@ -58,4 +58,4 @@ readCodel (PixelRGB8 r g b) = case (r,g,b) of
   (0xc0,0x00,0xc0) -> Color Magenta Dark
   (0xff,0xff,0xff) -> Color White Normal
   (0x00,0x00,0x00) -> Color Black Normal
-  _ -> error "Unsupported color"
+  _ -> error $ "Unsupported color: " ++ show (r,g,b)
