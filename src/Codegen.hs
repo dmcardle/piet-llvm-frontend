@@ -283,7 +283,7 @@ defColorBlock c =
                      { pointerReferent = nextBlockFuncTy
                      , pointerAddrSpace = AddrSpace 0
                      })
-                    funcLookupTableElemPtrName
+                    lookupTableElemPtrName
               , value =
                   ConstantOperand
                     (Const.GlobalReference
