@@ -7,6 +7,6 @@ fi
 
 LL_FILE=$1
 
-PIETLIB=src/pietlib/pietlib.ll
+PIETLIB=src/pietlib/pietlib.c
 
-clang-5.0 "$LL_FILE" "$PIETLIB"
+clang-5.0 -g "$LL_FILE" "$PIETLIB"
