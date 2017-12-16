@@ -10,7 +10,8 @@ void nextBlock(int * stackPtr,
                char dp,
                char cc,
                void (*funcTable[8])(int*, char, char),
-               int colorTable[8],
+               int hueTable[8],
+               int lightTable[8],
                int curBlockNum) {
 
   int combo = 2*dp + cc;

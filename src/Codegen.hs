@@ -87,7 +87,8 @@ defNextBlockFunc =
           , Parameter T.i8 (Name "dp") []
           , Parameter T.i8 (Name "cc") []
           , Parameter funcTableTy (Name "funcTable") []
-          , Parameter colorTableTy (Name "colorTable") []
+          , Parameter colorTableTy (Name "hueTable") []
+          , Parameter colorTableTy (Name "lightTable") []
           , Parameter T.i32 (Name "curBlockNum") []
           ]
         , False)
@@ -97,7 +98,7 @@ defNextBlockFunc =
 libNextBlockFuncTy =
   FunctionType
   { resultType = VoidType
-  , argumentTypes = [T.ptr T.i32, T.i8, T.i8, funcTableTy, colorTableTy, T.i32]
+  , argumentTypes = [T.ptr T.i32, T.i8, T.i8, funcTableTy, colorTableTy, colorTableTy, T.i32]
   , isVarArg = False
   }
 
@@ -159,7 +160,15 @@ defColorBlock c =
              , LLVM.AST.alignment = 16
              , metadata = []
              }
-           , Name "colorArray" :=
+           , Name "hueArray" :=
+             Alloca
+             { allocatedType =
+                 ArrayType {nArrayElements = 8, elementType = T.i32}
+             , numElements = Nothing
+             , LLVM.AST.alignment = 16
+             , metadata = []
+             }
+           , Name "lightnessArray" :=
              Alloca
              { allocatedType =
                  ArrayType {nArrayElements = 8, elementType = T.i32}
@@ -187,7 +196,7 @@ defColorBlock c =
                  ]
              , metadata = []
              }
-           , Name "colorArrayPtr" :=
+           , Name "hueArrayPtr" :=
              GetElementPtr
              { inBounds = True
              , address =
@@ -198,7 +207,27 @@ defColorBlock c =
                         {nArrayElements = 8, elementType = T.i32}
                     , pointerAddrSpace = AddrSpace 0
                     })
-                   (Name "colorArray")
+                   (Name "hueArray")
+             , indices =
+                 [ ConstantOperand
+                     (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
+                 , ConstantOperand
+                     (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
+                 ]
+             , metadata = []
+             }
+           , Name "lightnessArrayPtr" :=
+             GetElementPtr
+             { inBounds = True
+             , address =
+                 LocalReference
+                   (PointerType
+                    { pointerReferent =
+                        ArrayType
+                        {nArrayElements = 8, elementType = T.i32}
+                    , pointerAddrSpace = AddrSpace 0
+                    })
+                   (Name "hueArray")
              , indices =
                  [ ConstantOperand
                      (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
@@ -228,7 +257,8 @@ defColorBlock c =
                   -- funcTable
                 [ (LocalReference funcTableTy (Name "funcArrayPtr"), [])
                   -- colorTable
-                , (LocalReference T.i32 (Name "colorArrayPtr"), [])
+                , (LocalReference T.i32 (Name "hueArrayPtr"), [])
+                , (LocalReference T.i32 (Name "lightnessArrayPtr"), [])
                   -- curBlockNum
                 , ( ConstantOperand
                       (Const.Int 32 (fromIntegral (bid (rawBlock c))))
@@ -245,8 +275,12 @@ defColorBlock c =
       -> [Named Instruction]
     storeInstructionsForCombo (n, (dp, cc, blockId)) =
       let funcLookupTableElemPtrName = concatAsName ["func_tbl_ptr", show n]
-          colorLookupTableElemPtrName = concatAsName ["color_tbl_ptr", show n]
+          hueLookupTableElemPtrName = concatAsName ["hue_tbl_ptr", show n]
+          lightnessLookupTableElemPtrName = concatAsName ["lightness_tbl_ptr", show n]
           combo = 2 * (fromEnum dp) + (fromEnum cc)
+
+          hueValue = 0
+          lightnessValue = 0
       in [ funcLookupTableElemPtrName :=
            GetElementPtr
            { inBounds = True
@@ -289,7 +323,7 @@ defColorBlock c =
               , LLVM.AST.alignment = 8
               , metadata = []
               }),
-           colorLookupTableElemPtrName :=
+           hueLookupTableElemPtrName :=
            GetElementPtr
            { inBounds = True
            , address =
@@ -300,7 +334,7 @@ defColorBlock c =
                       {nArrayElements = 8, elementType = T.i32}
                   , pointerAddrSpace = AddrSpace 0
                   })
-                 (Name "colorArray")
+                 (Name "hueArray")
            , indices =
                [ ConstantOperand
                    (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
@@ -321,10 +355,50 @@ defColorBlock c =
                      { pointerReferent = nextBlockFuncTy
                      , pointerAddrSpace = AddrSpace 0
                      })
-                    colorLookupTableElemPtrName
+                    hueLookupTableElemPtrName
               , value =
                   ConstantOperand
-                    (Const.Int 32 0)
+                    (Const.Int 32 hueValue)
+              , maybeAtomicity = Nothing
+              , LLVM.AST.alignment = 8
+              , metadata = []
+              }),
+           lightnessLookupTableElemPtrName :=
+           GetElementPtr
+           { inBounds = True
+           , address =
+               LocalReference
+                 (PointerType
+                  { pointerReferent =
+                      ArrayType
+                      {nArrayElements = 8, elementType = T.i32}
+                  , pointerAddrSpace = AddrSpace 0
+                  })
+                 (Name "lightnessArray")
+           , indices =
+               [ ConstantOperand
+                   (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
+               , ConstantOperand
+                   (Const.Int
+                    { Const.integerBits = 32
+                    , Const.integerValue = fromIntegral combo
+                    })
+               ]
+           , metadata = []
+           }
+         , Do
+             (Store
+              { volatile = False
+              , address =
+                  LocalReference
+                    (PointerType
+                     { pointerReferent = nextBlockFuncTy
+                     , pointerAddrSpace = AddrSpace 0
+                     })
+                    lightnessLookupTableElemPtrName
+              , value =
+                  ConstantOperand
+                    (Const.Int 32 lightnessValue)
               , maybeAtomicity = Nothing
               , LLVM.AST.alignment = 8
               , metadata = []
