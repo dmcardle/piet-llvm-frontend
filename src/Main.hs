@@ -22,11 +22,14 @@ main = do
 
   putStrLn "Legend:"
   printLegend
-
   putStrLn ""
 
   pietProg <- translateImage $ filePath
   D.printProg pietProg
 
   let colorBlocks = parse $ lexProg pietProg []
+
+  putStrLn "Color blocks:"
+  putStrLn $ show colorBlocks
+
   toLLVM colorBlocks

@@ -9,7 +9,7 @@ import Debug.Trace
 type ColorBlockId = Int
 type ColorBlockConn = Maybe ColorBlockId
 
-data PietDirPointer = DP_Left | DP_Right | DP_Up | DP_Down deriving (Eq, Enum, Show)
+data PietDirPointer = DP_Right | DP_Down | DP_Left | DP_Up deriving (Eq, Enum, Show)
 data PietCodelChooser = CC_Left | CC_Right deriving (Eq, Enum, Show)
 
 -- The raw color block resembles tokens in a traditional programming language.
@@ -47,8 +47,8 @@ parse rs = map buildAbsBlock rs
         filterY v = [(x,y) | (x,y) <- pts, y==v]
 
         getEdge :: PietDirPointer -> [(Int, Int)]
-        getEdge DP_Right = [ maximum (filterX x) | x <- uniqX ]
-        getEdge DP_Down  = [ maximum (filterY y) | y <- uniqY ]
+        getEdge DP_Right = [ maximum (filterY y) | y <- uniqY ]
+        getEdge DP_Down  = [ maximum (filterX x) | x <- uniqX ]
         getEdge DP_Left  = [ minimum (filterY y) | y <- uniqY ]
         getEdge DP_Up    = [ minimum (filterX x) | x <- uniqX ]
 

@@ -80,7 +80,6 @@ defNextBlockFunc = GlobalDefinition functionDefaults
                    , Parameter T.i8 (Name "dp") []
                    , Parameter T.i8 (Name "cc") []
                    , Parameter funcTableTy (Name "funcTable") []
-                   , Parameter T.i32 (Name "combo") []
                    , Parameter T.i32 (Name "oldHue") []
                    , Parameter T.i32 (Name "oldLightness") []
                    , Parameter T.i32 (Name "newHue") []
@@ -118,8 +117,7 @@ defColorBlock c = GlobalDefinition functionDefaults
   , personalityFunction = Just globalPersonalityFunc
   , parameters = colorBlockParams
   , returnType = T.VoidType
-  , basicBlocks = concat [setupBasicBlocks
-                         ,(createConditionals 1 (nextBlockLookup c))
+  , basicBlocks = concat [setupBasicBlocks (nextBlockLookup c)
                          ,exitBlocks]
   }
   where
@@ -134,13 +132,17 @@ defColorBlock c = GlobalDefinition functionDefaults
     ccVar = i8Var "cc"
     comboVar = i8Var "combo"
 
-    setupBasicBlocks :: [BasicBlock]
-    setupBasicBlocks = [
+    setupBasicBlocks :: [(PietDirPointer, PietCodelChooser, ColorBlockId)] -> [BasicBlock]
+    setupBasicBlocks lookupTbl = [
       BasicBlock (concatAsName ["set_vars", colorBlockId])
         ([
           -- Make room for the CC value in combo
           Name "dpShift" := Shl True True dpVar (ConstantOperand (Const.Int 8 1)) [],
           Name "combo" := Add True True (i8Var "dpShift") ccVar [],
+          Name "oldHue" := Add True True (ConstantOperand $ Const.Int 32 0) (ConstantOperand $ Const.Int 32 1) [],
+          Name "oldLightness" := Add True True (ConstantOperand $ Const.Int 32 0) (ConstantOperand $ Const.Int 32 1) [],
+          Name "newHue" := Add True True (ConstantOperand $ Const.Int 32 0) (ConstantOperand $ Const.Int 32 1) [],
+          Name "newLightness" := Add True True (ConstantOperand $ Const.Int 32 0) (ConstantOperand $ Const.Int 32 1) [],
           Name "funcArray" :=
                Alloca
                { allocatedType =
@@ -172,29 +174,45 @@ defColorBlock c = GlobalDefinition functionDefaults
                    ]
                , metadata = []
                }
-          ] ++ (concatMap storeInstructionsForCombo [0..7]))
+          ] ++ (concatMap storeInstructionsForCombo (zip [0..7] lookupTbl)))
         (Do $ Br (Name "perform_action") []),
 
       BasicBlock (Name "perform_action")
-        [Do $ Call {
-            tailCallKind=Nothing
-            , callingConvention=CC.C
-            ,returnAttributes=[]
-            ,function=(Right $
-                        ConstantOperand $
-                        Const.GlobalReference
-                        (T.ptr
-                         (T.FunctionType T.VoidType
-                          ([(T.ptr T.i32), T.i8, T.i8, funcTableTy] ++ (replicate 6 T.i32)) False)) (Name "nextBlock"))
-            ,arguments=[(p,[]) | p<-[stackptrVar, dpVar, ccVar]] ++ [(LocalReference funcTableTy (Name "funcArrayPtr"), [])] ++ replicate 6 ((ConstantOperand $ Const.Int 32 0),[])
-            ,functionAttributes=[]
-            ,metadata=[]
-            }]
-        (Do $ Br (Name "decide1") [])
+        [ Do $
+          Call
+          { tailCallKind = Nothing
+          , callingConvention = CC.C
+          , returnAttributes = []
+          , function =
+              (Right $
+               ConstantOperand $
+               Const.GlobalReference
+                 (T.ptr
+                    (T.FunctionType
+                       T.VoidType
+                       ([(T.ptr T.i32), T.i8, T.i8, funcTableTy] ++ (replicate 5 T.i32))
+                       False))
+                 (Name "nextBlock"))
+          , arguments =
+              [(p, []) | p <- [stackptrVar, dpVar, ccVar]] ++
+              [ (LocalReference funcTableTy (Name "funcArrayPtr"), [])
+              , (LocalReference T.i32 (Name "oldHue"), [])
+              , (LocalReference T.i32 (Name "oldLightness"), [])
+              , (LocalReference T.i32 (Name "newHue"), [])
+              , (LocalReference T.i32 (Name "newLightness"), [])
+              , (ConstantOperand (Const.Int 32 (fromIntegral (bid (rawBlock c)))), [])
+              ]
+          , functionAttributes = []
+          , metadata = []
+          }
+        ]
+        (Do $ Ret Nothing [])
       ]
 
-    storeInstructionsForCombo n =
+    storeInstructionsForCombo :: (Integer, (PietDirPointer, PietCodelChooser, ColorBlockId)) -> [Named Instruction]
+    storeInstructionsForCombo (n, (dp, cc, blockId)) =
       let lookupTableElemPtrName = concatAsName ["tmp_tbl_ptr", show n]
+          combo = 2*(fromEnum dp) + (fromEnum cc)
       in [lookupTableElemPtrName :=
            GetElementPtr
            { inBounds = True
@@ -210,7 +228,7 @@ defColorBlock c = GlobalDefinition functionDefaults
                [ ConstantOperand
                    (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
                , ConstantOperand
-                   (Const.Int {Const.integerBits = 32, Const.integerValue = n})
+                   (Const.Int {Const.integerBits = 32, Const.integerValue = fromIntegral combo})
                ]
            , metadata = []
            }
@@ -226,44 +244,11 @@ defColorBlock c = GlobalDefinition functionDefaults
                     lookupTableElemPtrName
               , value =
                   ConstantOperand
-                    (Const.GlobalReference nextBlockFuncTy (Name "ColorBlock1"))
+                    (Const.GlobalReference nextBlockFuncTy (concatAsName ["ColorBlock", show blockId]))
               , maybeAtomicity = Nothing
               , LLVM.AST.alignment = 8
               , metadata = []
               })]
-
-    -- Create a list of LLVM basic blocks that implement this color block's
-    -- next-block lookup table.
-    createConditionals :: Int -> [(PietDirPointer, PietCodelChooser, ColorBlockId)] -> [BasicBlock]
-    createConditionals _ [] = []
-    createConditionals n ((dp,cc,blk):xs) = newBasicBlocks ++ createConditionals (n+1) xs
-      where
-        expectedComboVal = 2*(fromEnum dp) + (fromEnum cc)
-        expectedComboVar = concatAsName $ ["combo_is_", show expectedComboVal]
-
-        nextCondName
-          | xs == [] = Name "exit_normal"
-          | otherwise = concatAsName ["decide", show (n+1)]
-
-        newBasicBlocks = [
-          BasicBlock (concatAsName ["decide", show n])
-            [
-              expectedComboVar := ICmp IntPred.EQ comboVar (ConstantOperand (Const.Int 8 0)) []
-            ]
-            (Do $ CondBr (LocalReference T.i8 expectedComboVar) (concatAsName ["handle", show expectedComboVal]) nextCondName [])
-          ,
-          BasicBlock (concatAsName ["handle", show expectedComboVal])
-            [Do $ Call {
-                tailCallKind=Just MustTail
-                , callingConvention=CC.C
-                ,returnAttributes=[]
-                ,function=(Right $ ConstantOperand $ Const.GlobalReference (T.ptr (T.FunctionType T.VoidType [(T.ptr T.i32), T.i8, T.i8] False)) (colorBlockName $ show blk))
-                ,arguments=[(p,[]) | p<-[stackptrVar, dpVar, ccVar]]
-                ,functionAttributes=[]
-                ,metadata=[]
-                }]
-            (Do $ Ret Nothing [])
-          ]
 
     exitBlocks :: [BasicBlock]
     exitBlocks = [
