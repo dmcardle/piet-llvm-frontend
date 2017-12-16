@@ -3,6 +3,7 @@
 module Codegen where
 
 import PietLang
+import ImageLoader (PietColor(..), PietHue(..))
 
 -- Codegen takes a list of abstract color blocks and emits LLVM IR code.
 -- Global state in the emitted code will include the DP and CC.
@@ -42,12 +43,6 @@ concatAsName xs = Name (BS.toShort $ B.concat $ map BC.pack xs)
 colorBlockName :: String -> Name
 colorBlockName blockId = concatAsName ["ColorBlock", blockId]
 
-colorBlockParams = ( [ Parameter (T.ptr T.i32) (Name "stackptr") []
-                     , Parameter T.i8 (Name "dp") []
-                     , Parameter T.i8 (Name "cc") []
-                     ]
-                   , False )
-
 globalPersonalityFunc = Const.GlobalReference (T.ptr (T.FunctionType T.VoidType [] False)) (Name "catchExc")
 
 --colorTableTy = T.ptr $ ArrayType {nArrayElements = 8, elementType = T.i32}
@@ -62,12 +57,14 @@ nextBlockFuncTy =
   PointerType
   { pointerReferent =
       FunctionType
-      { resultType = VoidType
+      { resultType = T.i32
       , argumentTypes =
           [ PointerType
             { pointerReferent = IntegerType {typeBits = 32}
             , pointerAddrSpace = AddrSpace 0
             }
+          , IntegerType {typeBits = 8}
+          , IntegerType {typeBits = 8}
           , IntegerType {typeBits = 8}
           , IntegerType {typeBits = 8}
           ]
@@ -77,29 +74,21 @@ nextBlockFuncTy =
   }
 
 defNextBlockFunc :: Definition
-defNextBlockFunc =
-  GlobalDefinition
-    functionDefaults
-    { name = Name "nextBlock"
-    , linkage = L.External
-    , parameters =
-        ( [ Parameter (T.ptr T.i32) (Name "stackPtr") []
-          , Parameter T.i8 (Name "dp") []
-          , Parameter T.i8 (Name "cc") []
-          , Parameter funcTableTy (Name "funcTable") []
-          , Parameter colorTableTy (Name "hueTable") []
-          , Parameter colorTableTy (Name "lightTable") []
-          , Parameter T.i32 (Name "curBlockNum") []
-          ]
-        , False)
-    , returnType = T.VoidType
-    }
-
-libNextBlockFuncTy =
-  FunctionType
-  { resultType = VoidType
-  , argumentTypes = [T.ptr T.i32, T.i8, T.i8, funcTableTy, colorTableTy, colorTableTy, T.i32]
-  , isVarArg = False
+defNextBlockFunc = GlobalDefinition functionDefaults
+  { name = Name "nextBlock"
+  , linkage = L.External
+  , parameters = ([ Parameter (T.ptr T.i32) (Name "stackPtr") []
+                   , Parameter T.i8 (Name "dp") []
+                   , Parameter T.i8 (Name "cc") []
+                   , Parameter funcTableTy (Name "funcTable") []
+                   , Parameter T.i8 (Name "oldHue") []
+                   , Parameter T.i8 (Name "oldLight") []
+                   , Parameter T.i8 (Name "newHue") []
+                   , Parameter T.i8 (Name "newLightness") []
+                   , Parameter T.i32 (Name "curBlockSize") []
+                   , Parameter T.i32 (Name "curBlockNum") []
+                   ], False)
+  , returnType = T.VoidType
   }
 
 -- Define the exception handler
@@ -112,6 +101,14 @@ defCatchExc = GlobalDefinition functionDefaults
   , basicBlocks = [BasicBlock (Name "done") [] (Do $ Ret Nothing [])]
   }
 
+colorBlockParams = ( [ Parameter (T.ptr T.i32) (Name "stackptr") []
+                     , Parameter T.i8 (Name "dp") []
+                     , Parameter T.i8 (Name "cc") []
+                     , Parameter T.i8 (Name "oldHue") []
+                     , Parameter T.i8 (Name "oldLight") []
+                     ]
+                   , False )
+
 -- Define the special black border. The block's number is agreed to be 0.
 defBlackBorder :: Definition
 defBlackBorder = GlobalDefinition functionDefaults
@@ -119,8 +116,8 @@ defBlackBorder = GlobalDefinition functionDefaults
   , linkage = L.LinkOnce
   , personalityFunction = Just globalPersonalityFunc
   , parameters = colorBlockParams
-  , returnType = T.VoidType
-  , basicBlocks = [BasicBlock (Name "done") [] (Do $ Ret Nothing [])]
+  , returnType = T.i32
+  , basicBlocks = [BasicBlock (Name "done") [] (Do $ Ret (Just (ConstantOperand (Const.Int 32 1))) [])]
   }
 
 defColorBlock :: AbsColorBlock -> Definition
@@ -131,18 +128,28 @@ defColorBlock c =
     , linkage = L.LinkOnce
     , personalityFunction = Just globalPersonalityFunc
     , parameters = colorBlockParams
-    , returnType = T.VoidType
-    , basicBlocks = concat [setupBasicBlocks (nextBlockLookup c), exitBlocks]
+    , returnType = T.i32
+    , basicBlocks = buildBasicBlocks
     }
   where
     colorBlockId :: String
     colorBlockId = show $ bid $ rawBlock c
+    (Color myHue myLightness) = absColor c
     --i8Var :: String -> Operand
     i8Var name = LocalReference T.i8 (Name name)
     stackptrVar = i8Var "stackptr"
     dpVar = i8Var "dp"
     ccVar = i8Var "cc"
     comboVar = i8Var "combo"
+    buildBasicBlocks
+      | myHue /= Black =
+        concat [setupBasicBlocks (nextBlockLookup c), exitBlocks]
+      | otherwise =
+        [ BasicBlock
+            (Name "exitBlackBlock")
+            []
+            (Do $ Ret (Just $ ConstantOperand (Const.Int 32 1)) [])
+        ]
     setupBasicBlocks ::
          [(PietDirPointer, PietCodelChooser, ColorBlockId)] -> [BasicBlock]
     setupBasicBlocks lookupTbl =
@@ -152,26 +159,25 @@ defColorBlock c =
           ([ Name "dpShift" :=
              Shl True True dpVar (ConstantOperand (Const.Int 8 1)) []
            , Name "combo" := Add True True (i8Var "dpShift") ccVar []
+           , Name "myHue" :=
+             Add
+               True
+               True
+               (ConstantOperand $ Const.Int 8 0)
+               (ConstantOperand $ Const.Int 8 (fromIntegral $ fromEnum myHue))
+               []
+           , Name "myLightness" :=
+             Add
+               True
+               True
+               (ConstantOperand $ Const.Int 8 0)
+               (ConstantOperand $
+                Const.Int 8 (fromIntegral $ fromEnum myLightness))
+               []
            , Name "funcArray" :=
              Alloca
              { allocatedType =
                  ArrayType {nArrayElements = 8, elementType = nextBlockFuncTy}
-             , numElements = Nothing
-             , LLVM.AST.alignment = 16
-             , metadata = []
-             }
-           , Name "hueArray" :=
-             Alloca
-             { allocatedType =
-                 ArrayType {nArrayElements = 8, elementType = T.i32}
-             , numElements = Nothing
-             , LLVM.AST.alignment = 16
-             , metadata = []
-             }
-           , Name "lightnessArray" :=
-             Alloca
-             { allocatedType =
-                 ArrayType {nArrayElements = 8, elementType = T.i32}
              , numElements = Nothing
              , LLVM.AST.alignment = 16
              , metadata = []
@@ -196,46 +202,6 @@ defColorBlock c =
                  ]
              , metadata = []
              }
-           , Name "hueArrayPtr" :=
-             GetElementPtr
-             { inBounds = True
-             , address =
-                 LocalReference
-                   (PointerType
-                    { pointerReferent =
-                        ArrayType
-                        {nArrayElements = 8, elementType = T.i32}
-                    , pointerAddrSpace = AddrSpace 0
-                    })
-                   (Name "hueArray")
-             , indices =
-                 [ ConstantOperand
-                     (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
-                 , ConstantOperand
-                     (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
-                 ]
-             , metadata = []
-             }
-           , Name "lightnessArrayPtr" :=
-             GetElementPtr
-             { inBounds = True
-             , address =
-                 LocalReference
-                   (PointerType
-                    { pointerReferent =
-                        ArrayType
-                        {nArrayElements = 8, elementType = T.i32}
-                    , pointerAddrSpace = AddrSpace 0
-                    })
-                   (Name "hueArray")
-             , indices =
-                 [ ConstantOperand
-                     (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
-                 , ConstantOperand
-                     (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
-                 ]
-             , metadata = []
-             }
            ] ++
            (concatMap storeInstructionsForCombo (zip [0 .. 7] lookupTbl)))
           (Do $ Br (Name "perform_action") [])
@@ -250,16 +216,25 @@ defColorBlock c =
                 (Right $
                  ConstantOperand $
                  Const.GlobalReference
-                   (T.ptr libNextBlockFuncTy)
+                   (T.ptr
+                      (T.FunctionType
+                         T.VoidType
+                         ([(T.ptr T.i32), T.i8, T.i8, funcTableTy] ++
+                          (replicate 4 T.i8) ++ [T.i32, T.i32])
+                         False))
                    (Name "nextBlock"))
             , arguments =
-                [(p, []) | p <- [stackptrVar, dpVar, ccVar]] ++
-                  -- funcTable
-                [ (LocalReference funcTableTy (Name "funcArrayPtr"), [])
-                  -- colorTable
-                , (LocalReference T.i32 (Name "hueArrayPtr"), [])
-                , (LocalReference T.i32 (Name "lightnessArrayPtr"), [])
-                  -- curBlockNum
+                [ (stackptrVar, [])
+                , (dpVar, [])
+                , (ccVar, [])
+                , (LocalReference funcTableTy (Name "funcArrayPtr"), [])
+                , (LocalReference T.i8 (Name "oldHue"), [])
+                , (LocalReference T.i8 (Name "oldLight"), [])
+                , (LocalReference T.i8 (Name "myHue"), [])
+                , (LocalReference T.i8 (Name "myLightness"), [])
+                , ( ConstantOperand
+                      (Const.Int 32 (fromIntegral (size (rawBlock c))))
+                  , [])
                 , ( ConstantOperand
                       (Const.Int 32 (fromIntegral (bid (rawBlock c))))
                   , [])
@@ -268,20 +243,15 @@ defColorBlock c =
             , metadata = []
             }
           ]
-          (Do $ Ret Nothing [])
+          (Do $ Ret (Just (ConstantOperand (Const.Int 32 0))) [])
       ]
     storeInstructionsForCombo ::
          (Integer, (PietDirPointer, PietCodelChooser, ColorBlockId))
       -> [Named Instruction]
     storeInstructionsForCombo (n, (dp, cc, blockId)) =
-      let funcLookupTableElemPtrName = concatAsName ["func_tbl_ptr", show n]
-          hueLookupTableElemPtrName = concatAsName ["hue_tbl_ptr", show n]
-          lightnessLookupTableElemPtrName = concatAsName ["lightness_tbl_ptr", show n]
+      let lookupTableElemPtrName = concatAsName ["tmp_tbl_ptr", show n]
           combo = 2 * (fromEnum dp) + (fromEnum cc)
-
-          hueValue = 0
-          lightnessValue = 0
-      in [ funcLookupTableElemPtrName :=
+      in [ lookupTableElemPtrName :=
            GetElementPtr
            { inBounds = True
            , address =
@@ -322,86 +292,6 @@ defColorBlock c =
               , maybeAtomicity = Nothing
               , LLVM.AST.alignment = 8
               , metadata = []
-              }),
-           hueLookupTableElemPtrName :=
-           GetElementPtr
-           { inBounds = True
-           , address =
-               LocalReference
-                 (PointerType
-                  { pointerReferent =
-                      ArrayType
-                      {nArrayElements = 8, elementType = T.i32}
-                  , pointerAddrSpace = AddrSpace 0
-                  })
-                 (Name "hueArray")
-           , indices =
-               [ ConstantOperand
-                   (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
-               , ConstantOperand
-                   (Const.Int
-                    { Const.integerBits = 32
-                    , Const.integerValue = fromIntegral combo
-                    })
-               ]
-           , metadata = []
-           }
-         , Do
-             (Store
-              { volatile = False
-              , address =
-                  LocalReference
-                    (PointerType
-                     { pointerReferent = nextBlockFuncTy
-                     , pointerAddrSpace = AddrSpace 0
-                     })
-                    hueLookupTableElemPtrName
-              , value =
-                  ConstantOperand
-                    (Const.Int 32 hueValue)
-              , maybeAtomicity = Nothing
-              , LLVM.AST.alignment = 8
-              , metadata = []
-              }),
-           lightnessLookupTableElemPtrName :=
-           GetElementPtr
-           { inBounds = True
-           , address =
-               LocalReference
-                 (PointerType
-                  { pointerReferent =
-                      ArrayType
-                      {nArrayElements = 8, elementType = T.i32}
-                  , pointerAddrSpace = AddrSpace 0
-                  })
-                 (Name "lightnessArray")
-           , indices =
-               [ ConstantOperand
-                   (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
-               , ConstantOperand
-                   (Const.Int
-                    { Const.integerBits = 32
-                    , Const.integerValue = fromIntegral combo
-                    })
-               ]
-           , metadata = []
-           }
-         , Do
-             (Store
-              { volatile = False
-              , address =
-                  LocalReference
-                    (PointerType
-                     { pointerReferent = nextBlockFuncTy
-                     , pointerAddrSpace = AddrSpace 0
-                     })
-                    lightnessLookupTableElemPtrName
-              , value =
-                  ConstantOperand
-                    (Const.Int 32 lightnessValue)
-              , maybeAtomicity = Nothing
-              , LLVM.AST.alignment = 8
-              , metadata = []
               })
          ]
     exitBlocks :: [BasicBlock]
@@ -410,7 +300,10 @@ defColorBlock c =
           (concatAsName ["catch_exception"])
           []
           (Do $ Resume (ConstantOperand Const.TokenNone) [])
-      , BasicBlock (concatAsName ["exit_normal"]) [] (Do $ Ret Nothing [])
+      , BasicBlock
+          (concatAsName ["exit_normal"])
+          []
+          (Do $ Ret (Just $ ConstantOperand (Const.Int 32 0)) [])
       ]
 
 createModule :: [AbsColorBlock] -> LLVM.AST.Module

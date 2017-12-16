@@ -22,6 +22,7 @@ data RawColorBlock = RawColorBlock { bid :: ColorBlockId,
 
 -- The abstract color block resembles an Abstract Syntax Tree.
 data AbsColorBlock = AbsColorBlock { rawBlock :: RawColorBlock,
+                                     absColor :: PietColor,
                                      -- no point in making this a function since it must be exhaustive
                                      nextBlockLookup :: [(PietDirPointer, PietCodelChooser, ColorBlockId)]
                                    }
@@ -35,7 +36,7 @@ enumAll = [toEnum 0 ..]
 parse :: [RawColorBlock] -> [AbsColorBlock]
 parse rs = map buildAbsBlock rs
   where
-    buildAbsBlock r = AbsColorBlock {rawBlock=r, nextBlockLookup=buildLookup r}
+    buildAbsBlock r = AbsColorBlock {rawBlock=r, absColor=color r, nextBlockLookup=buildLookup r}
     buildLookup r = [(dp, cc, findBlockFor dp cc $ chooseCodel cc $ getEdge dp)
                     | dp <- enumAll, cc <- enumAll]
 
@@ -48,8 +49,8 @@ parse rs = map buildAbsBlock rs
 
         getEdge :: PietDirPointer -> [(Int, Int)]
         getEdge DP_Right = [ maximum (filterY y) | y <- uniqY ]
-        getEdge DP_Down  = [ maximum (filterX x) | x <- uniqX ]
-        getEdge DP_Left  = [ minimum (filterY y) | y <- uniqY ]
+        getEdge DP_Down  = reverse [ maximum (filterX x) | x <- uniqX ]
+        getEdge DP_Left  = reverse [ minimum (filterY y) | y <- uniqY ]
         getEdge DP_Up    = [ minimum (filterX x) | x <- uniqX ]
 
         -- This function implements part of the behavior described in the
@@ -117,7 +118,7 @@ blackBorderColorBlock = RawColorBlock { bid=0,
                                         size=0,
                                         members = []}
 
-blackBorderAbsBlock = AbsColorBlock {rawBlock=blackBorderColorBlock, nextBlockLookup=[]}
+blackBorderAbsBlock = AbsColorBlock {rawBlock=blackBorderColorBlock, absColor=Color Black Normal, nextBlockLookup=[]}
 
 --------------------------------------------------------------------------------
 -- Examples
@@ -130,7 +131,8 @@ nullRawColorBlock = RawColorBlock { bid=0,
                                   }
 
 nullAbsColorBlock = AbsColorBlock { rawBlock = nullRawColorBlock,
-                                    nextBlockLookup = []
+                                    nextBlockLookup = [],
+                                    absColor = Color Black Normal
                                   }
 
 nullProgram = PietProgram {codels = [], width = 0, height = 0}
