@@ -159,6 +159,14 @@ defColorBlock c =
              , LLVM.AST.alignment = 16
              , metadata = []
              }
+           , Name "colorArray" :=
+             Alloca
+             { allocatedType =
+                 ArrayType {nArrayElements = 8, elementType = T.i32}
+             , numElements = Nothing
+             , LLVM.AST.alignment = 16
+             , metadata = []
+             }
            , Name "funcArrayPtr" :=
              GetElementPtr
              { inBounds = True
@@ -171,6 +179,26 @@ defColorBlock c =
                     , pointerAddrSpace = AddrSpace 0
                     })
                    (Name "funcArray")
+             , indices =
+                 [ ConstantOperand
+                     (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
+                 , ConstantOperand
+                     (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
+                 ]
+             , metadata = []
+             }
+           , Name "colorArrayPtr" :=
+             GetElementPtr
+             { inBounds = True
+             , address =
+                 LocalReference
+                   (PointerType
+                    { pointerReferent =
+                        ArrayType
+                        {nArrayElements = 8, elementType = T.i32}
+                    , pointerAddrSpace = AddrSpace 0
+                    })
+                   (Name "colorArray")
              , indices =
                  [ ConstantOperand
                      (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
@@ -200,23 +228,7 @@ defColorBlock c =
                   -- funcTable
                 [ (LocalReference funcTableTy (Name "funcArrayPtr"), [])
                   -- colorTable
-                , ( ConstantOperand
-                      (Const.GetElementPtr
-                       { Const.inBounds = True
-                       , Const.indices = [Const.Int 32 0, Const.Int 32 0]
-                       , Const.address =
-                           (Const.Array
-                            { Const.memberType = T.i32
-                            , Const.memberValues =
-                                replicate
-                                  8
-                                  (Const.Int
-                                   { Const.integerBits = 32
-                                   , Const.integerValue = 7
-                                   })
-                            })
-                       })
-                  , [])
+                , (LocalReference T.i32 (Name "colorArrayPtr"), [])
                   -- curBlockNum
                 , ( ConstantOperand
                       (Const.Int 32 (fromIntegral (bid (rawBlock c))))
@@ -232,9 +244,10 @@ defColorBlock c =
          (Integer, (PietDirPointer, PietCodelChooser, ColorBlockId))
       -> [Named Instruction]
     storeInstructionsForCombo (n, (dp, cc, blockId)) =
-      let lookupTableElemPtrName = concatAsName ["tmp_tbl_ptr", show n]
+      let funcLookupTableElemPtrName = concatAsName ["func_tbl_ptr", show n]
+          colorLookupTableElemPtrName = concatAsName ["color_tbl_ptr", show n]
           combo = 2 * (fromEnum dp) + (fromEnum cc)
-      in [ lookupTableElemPtrName :=
+      in [ funcLookupTableElemPtrName :=
            GetElementPtr
            { inBounds = True
            , address =
@@ -266,12 +279,52 @@ defColorBlock c =
                      { pointerReferent = nextBlockFuncTy
                      , pointerAddrSpace = AddrSpace 0
                      })
-                    lookupTableElemPtrName
+                    funcLookupTableElemPtrName
               , value =
                   ConstantOperand
                     (Const.GlobalReference
                        nextBlockFuncTy
                        (concatAsName ["ColorBlock", show blockId]))
+              , maybeAtomicity = Nothing
+              , LLVM.AST.alignment = 8
+              , metadata = []
+              }),
+           colorLookupTableElemPtrName :=
+           GetElementPtr
+           { inBounds = True
+           , address =
+               LocalReference
+                 (PointerType
+                  { pointerReferent =
+                      ArrayType
+                      {nArrayElements = 8, elementType = T.i32}
+                  , pointerAddrSpace = AddrSpace 0
+                  })
+                 (Name "colorArray")
+           , indices =
+               [ ConstantOperand
+                   (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
+               , ConstantOperand
+                   (Const.Int
+                    { Const.integerBits = 32
+                    , Const.integerValue = fromIntegral combo
+                    })
+               ]
+           , metadata = []
+           }
+         , Do
+             (Store
+              { volatile = False
+              , address =
+                  LocalReference
+                    (PointerType
+                     { pointerReferent = nextBlockFuncTy
+                     , pointerAddrSpace = AddrSpace 0
+                     })
+                    colorLookupTableElemPtrName
+              , value =
+                  ConstantOperand
+                    (Const.Int 32 0)
               , maybeAtomicity = Nothing
               , LLVM.AST.alignment = 8
               , metadata = []
