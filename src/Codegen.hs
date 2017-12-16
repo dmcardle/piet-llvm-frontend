@@ -50,7 +50,27 @@ colorBlockParams = ( [ Parameter (T.ptr T.i32) (Name "stackptr") []
 
 globalPersonalityFunc = Const.GlobalReference (T.ptr (T.FunctionType T.VoidType [] False)) (Name "catchExc")
 
-funcTableTy = (PointerType {pointerReferent = PointerType {pointerReferent = FunctionType {resultType = VoidType, argumentTypes = [PointerType {pointerReferent = IntegerType {typeBits = 32}, pointerAddrSpace = AddrSpace 0},IntegerType {typeBits = 8},IntegerType {typeBits = 8}], isVarArg = False}, pointerAddrSpace = AddrSpace 0}, pointerAddrSpace = AddrSpace 0})
+funcTableTy =
+  (PointerType
+   {pointerReferent = nextBlockFuncTy, pointerAddrSpace = AddrSpace 0})
+
+nextBlockFuncTy =
+  PointerType
+  { pointerReferent =
+      FunctionType
+      { resultType = VoidType
+      , argumentTypes =
+          [ PointerType
+            { pointerReferent = IntegerType {typeBits = 32}
+            , pointerAddrSpace = AddrSpace 0
+            }
+          , IntegerType {typeBits = 8}
+          , IntegerType {typeBits = 8}
+          ]
+      , isVarArg = False
+      }
+  , pointerAddrSpace = AddrSpace 0
+  }
 
 defNextBlockFunc :: Definition
 defNextBlockFunc = GlobalDefinition functionDefaults
@@ -114,15 +134,45 @@ defColorBlock c = GlobalDefinition functionDefaults
     ccVar = i8Var "cc"
     comboVar = i8Var "combo"
 
-
     setupBasicBlocks :: [BasicBlock]
     setupBasicBlocks = [
       BasicBlock (concatAsName ["set_vars", colorBlockId])
-        [
+        ([
           -- Make room for the CC value in combo
           Name "dpShift" := Shl True True dpVar (ConstantOperand (Const.Int 8 1)) [],
-          Name "combo" := Add True True (i8Var "dpShift") ccVar []
-          ]
+          Name "combo" := Add True True (i8Var "dpShift") ccVar [],
+          Name "funcArray" :=
+               Alloca
+               { allocatedType =
+                   ArrayType
+                   { nArrayElements = 8
+                   , elementType = nextBlockFuncTy
+                   }
+               , numElements = Nothing
+               , LLVM.AST.alignment = 16
+               , metadata = []
+               },
+          Name "funcArrayPtr" :=
+               GetElementPtr
+               { inBounds = True
+               , address =
+                   LocalReference
+                     (PointerType
+                      { pointerReferent =
+                          ArrayType
+                          { nArrayElements = 8
+                          , elementType = nextBlockFuncTy
+                          }
+                      , pointerAddrSpace = AddrSpace 0
+                      })
+                     (Name "funcArray")
+               , indices =
+                   [ ConstantOperand (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
+                   , ConstantOperand (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
+                   ]
+               , metadata = []
+               }
+          ] ++ (concatMap storeInstructionsForCombo [0..7]))
         (Do $ Br (Name "perform_action") []),
 
       BasicBlock (Name "perform_action")
@@ -136,12 +186,51 @@ defColorBlock c = GlobalDefinition functionDefaults
                         (T.ptr
                          (T.FunctionType T.VoidType
                           ([(T.ptr T.i32), T.i8, T.i8, funcTableTy] ++ (replicate 6 T.i32)) False)) (Name "nextBlock"))
-            ,arguments=[(p,[]) | p<-[stackptrVar, dpVar, ccVar]] ++ [(ConstantOperand (Const.Null funcTableTy), [])] ++ replicate 6 ((ConstantOperand $ Const.Int 32 0),[])
+            ,arguments=[(p,[]) | p<-[stackptrVar, dpVar, ccVar]] ++ [(LocalReference funcTableTy (Name "funcArrayPtr"), [])] ++ replicate 6 ((ConstantOperand $ Const.Int 32 0),[])
             ,functionAttributes=[]
             ,metadata=[]
             }]
         (Do $ Br (Name "decide1") [])
       ]
+
+    storeInstructionsForCombo n =
+      let lookupTableElemPtrName = concatAsName ["tmp_tbl_ptr", show n]
+      in [lookupTableElemPtrName :=
+           GetElementPtr
+           { inBounds = True
+           , address =
+               LocalReference
+                 (PointerType
+                  { pointerReferent =
+                      ArrayType {nArrayElements = 8, elementType = nextBlockFuncTy}
+                  , pointerAddrSpace = AddrSpace 0
+                  })
+                 (Name "funcArray")
+           , indices =
+               [ ConstantOperand
+                   (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
+               , ConstantOperand
+                   (Const.Int {Const.integerBits = 32, Const.integerValue = n})
+               ]
+           , metadata = []
+           }
+         , Do
+             (Store
+              { volatile = False
+              , address =
+                  LocalReference
+                    (PointerType
+                     { pointerReferent = nextBlockFuncTy
+                     , pointerAddrSpace = AddrSpace 0
+                     })
+                    lookupTableElemPtrName
+              , value =
+                  ConstantOperand
+                    (Const.GlobalReference nextBlockFuncTy (Name "ColorBlock1"))
+              , maybeAtomicity = Nothing
+              , LLVM.AST.alignment = 8
+              , metadata = []
+              })]
 
     -- Create a list of LLVM basic blocks that implement this color block's
     -- next-block lookup table.
