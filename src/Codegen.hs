@@ -50,6 +50,10 @@ colorBlockParams = ( [ Parameter (T.ptr T.i32) (Name "stackptr") []
 
 globalPersonalityFunc = Const.GlobalReference (T.ptr (T.FunctionType T.VoidType [] False)) (Name "catchExc")
 
+--colorTableTy = T.ptr $ ArrayType {nArrayElements = 8, elementType = T.i32}
+colorTableTy = T.ptr T.i32
+
+
 funcTableTy =
   (PointerType
    {pointerReferent = nextBlockFuncTy, pointerAddrSpace = AddrSpace 0})
@@ -73,20 +77,28 @@ nextBlockFuncTy =
   }
 
 defNextBlockFunc :: Definition
-defNextBlockFunc = GlobalDefinition functionDefaults
-  { name = Name "nextBlock"
-  , linkage = L.External
-  , parameters = ([ Parameter (T.ptr T.i32) (Name "stackPtr") []
-                   , Parameter T.i8 (Name "dp") []
-                   , Parameter T.i8 (Name "cc") []
-                   , Parameter funcTableTy (Name "funcTable") []
-                   , Parameter T.i32 (Name "oldHue") []
-                   , Parameter T.i32 (Name "oldLightness") []
-                   , Parameter T.i32 (Name "newHue") []
-                   , Parameter T.i32 (Name "newLightness") []
-                   , Parameter T.i32 (Name "curBlockNum") []
-                   ], False)
-  , returnType = T.VoidType
+defNextBlockFunc =
+  GlobalDefinition
+    functionDefaults
+    { name = Name "nextBlock"
+    , linkage = L.External
+    , parameters =
+        ( [ Parameter (T.ptr T.i32) (Name "stackPtr") []
+          , Parameter T.i8 (Name "dp") []
+          , Parameter T.i8 (Name "cc") []
+          , Parameter funcTableTy (Name "funcTable") []
+          , Parameter colorTableTy (Name "colorTable") []
+          , Parameter T.i32 (Name "curBlockNum") []
+          ]
+        , False)
+    , returnType = T.VoidType
+    }
+
+libNextBlockFuncTy =
+  FunctionType
+  { resultType = VoidType
+  , argumentTypes = [T.ptr T.i32, T.i8, T.i8, funcTableTy, colorTableTy, T.i32]
+  , isVarArg = False
   }
 
 -- Define the exception handler
@@ -111,116 +123,126 @@ defBlackBorder = GlobalDefinition functionDefaults
   }
 
 defColorBlock :: AbsColorBlock -> Definition
-defColorBlock c = GlobalDefinition functionDefaults
-  { name = colorBlockName colorBlockId
-  , linkage = L.LinkOnce
-  , personalityFunction = Just globalPersonalityFunc
-  , parameters = colorBlockParams
-  , returnType = T.VoidType
-  , basicBlocks = concat [setupBasicBlocks (nextBlockLookup c)
-                         ,exitBlocks]
-  }
+defColorBlock c =
+  GlobalDefinition
+    functionDefaults
+    { name = colorBlockName colorBlockId
+    , linkage = L.LinkOnce
+    , personalityFunction = Just globalPersonalityFunc
+    , parameters = colorBlockParams
+    , returnType = T.VoidType
+    , basicBlocks = concat [setupBasicBlocks (nextBlockLookup c), exitBlocks]
+    }
   where
     colorBlockId :: String
     colorBlockId = show $ bid $ rawBlock c
-
     --i8Var :: String -> Operand
     i8Var name = LocalReference T.i8 (Name name)
-
     stackptrVar = i8Var "stackptr"
     dpVar = i8Var "dp"
     ccVar = i8Var "cc"
     comboVar = i8Var "combo"
-
-    setupBasicBlocks :: [(PietDirPointer, PietCodelChooser, ColorBlockId)] -> [BasicBlock]
-    setupBasicBlocks lookupTbl = [
-      BasicBlock (concatAsName ["set_vars", colorBlockId])
-        ([
+    setupBasicBlocks ::
+         [(PietDirPointer, PietCodelChooser, ColorBlockId)] -> [BasicBlock]
+    setupBasicBlocks lookupTbl =
+      [ BasicBlock
+          (concatAsName ["set_vars", colorBlockId])
           -- Make room for the CC value in combo
-          Name "dpShift" := Shl True True dpVar (ConstantOperand (Const.Int 8 1)) [],
-          Name "combo" := Add True True (i8Var "dpShift") ccVar [],
-          Name "oldHue" := Add True True (ConstantOperand $ Const.Int 32 0) (ConstantOperand $ Const.Int 32 1) [],
-          Name "oldLightness" := Add True True (ConstantOperand $ Const.Int 32 0) (ConstantOperand $ Const.Int 32 1) [],
-          Name "newHue" := Add True True (ConstantOperand $ Const.Int 32 0) (ConstantOperand $ Const.Int 32 1) [],
-          Name "newLightness" := Add True True (ConstantOperand $ Const.Int 32 0) (ConstantOperand $ Const.Int 32 1) [],
-          Name "funcArray" :=
-               Alloca
-               { allocatedType =
-                   ArrayType
-                   { nArrayElements = 8
-                   , elementType = nextBlockFuncTy
-                   }
-               , numElements = Nothing
-               , LLVM.AST.alignment = 16
-               , metadata = []
-               },
-          Name "funcArrayPtr" :=
-               GetElementPtr
-               { inBounds = True
-               , address =
-                   LocalReference
-                     (PointerType
-                      { pointerReferent =
-                          ArrayType
-                          { nArrayElements = 8
-                          , elementType = nextBlockFuncTy
-                          }
-                      , pointerAddrSpace = AddrSpace 0
-                      })
-                     (Name "funcArray")
-               , indices =
-                   [ ConstantOperand (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
-                   , ConstantOperand (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
-                   ]
-               , metadata = []
-               }
-          ] ++ (concatMap storeInstructionsForCombo (zip [0..7] lookupTbl)))
-        (Do $ Br (Name "perform_action") []),
-
-      BasicBlock (Name "perform_action")
-        [ Do $
-          Call
-          { tailCallKind = Nothing
-          , callingConvention = CC.C
-          , returnAttributes = []
-          , function =
-              (Right $
-               ConstantOperand $
-               Const.GlobalReference
-                 (T.ptr
-                    (T.FunctionType
-                       T.VoidType
-                       ([(T.ptr T.i32), T.i8, T.i8, funcTableTy] ++ (replicate 5 T.i32))
-                       False))
-                 (Name "nextBlock"))
-          , arguments =
-              [(p, []) | p <- [stackptrVar, dpVar, ccVar]] ++
-              [ (LocalReference funcTableTy (Name "funcArrayPtr"), [])
-              , (LocalReference T.i32 (Name "oldHue"), [])
-              , (LocalReference T.i32 (Name "oldLightness"), [])
-              , (LocalReference T.i32 (Name "newHue"), [])
-              , (LocalReference T.i32 (Name "newLightness"), [])
-              , (ConstantOperand (Const.Int 32 (fromIntegral (bid (rawBlock c)))), [])
-              ]
-          , functionAttributes = []
-          , metadata = []
-          }
-        ]
-        (Do $ Ret Nothing [])
+          ([ Name "dpShift" :=
+             Shl True True dpVar (ConstantOperand (Const.Int 8 1)) []
+           , Name "combo" := Add True True (i8Var "dpShift") ccVar []
+           , Name "funcArray" :=
+             Alloca
+             { allocatedType =
+                 ArrayType {nArrayElements = 8, elementType = nextBlockFuncTy}
+             , numElements = Nothing
+             , LLVM.AST.alignment = 16
+             , metadata = []
+             }
+           , Name "funcArrayPtr" :=
+             GetElementPtr
+             { inBounds = True
+             , address =
+                 LocalReference
+                   (PointerType
+                    { pointerReferent =
+                        ArrayType
+                        {nArrayElements = 8, elementType = nextBlockFuncTy}
+                    , pointerAddrSpace = AddrSpace 0
+                    })
+                   (Name "funcArray")
+             , indices =
+                 [ ConstantOperand
+                     (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
+                 , ConstantOperand
+                     (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
+                 ]
+             , metadata = []
+             }
+           ] ++
+           (concatMap storeInstructionsForCombo (zip [0 .. 7] lookupTbl)))
+          (Do $ Br (Name "perform_action") [])
+      , BasicBlock
+          (Name "perform_action")
+          [ Do $
+            Call
+            { tailCallKind = Nothing
+            , callingConvention = CC.C
+            , returnAttributes = []
+            , function =
+                (Right $
+                 ConstantOperand $
+                 Const.GlobalReference
+                   (T.ptr libNextBlockFuncTy)
+                   (Name "nextBlock"))
+            , arguments =
+                [(p, []) | p <- [stackptrVar, dpVar, ccVar]] ++
+                  -- funcTable
+                [ (LocalReference funcTableTy (Name "funcArrayPtr"), [])
+                  -- colorTable
+                , ( ConstantOperand
+                      (Const.GetElementPtr
+                       { Const.inBounds = True
+                       , Const.indices = [Const.Int 32 0, Const.Int 32 0]
+                       , Const.address =
+                           (Const.Array
+                            { Const.memberType = T.i32
+                            , Const.memberValues =
+                                replicate
+                                  8
+                                  (Const.Int
+                                   { Const.integerBits = 32
+                                   , Const.integerValue = 7
+                                   })
+                            })
+                       })
+                  , [])
+                  -- curBlockNum
+                , ( ConstantOperand
+                      (Const.Int 32 (fromIntegral (bid (rawBlock c))))
+                  , [])
+                ]
+            , functionAttributes = []
+            , metadata = []
+            }
+          ]
+          (Do $ Ret Nothing [])
       ]
-
-    storeInstructionsForCombo :: (Integer, (PietDirPointer, PietCodelChooser, ColorBlockId)) -> [Named Instruction]
+    storeInstructionsForCombo ::
+         (Integer, (PietDirPointer, PietCodelChooser, ColorBlockId))
+      -> [Named Instruction]
     storeInstructionsForCombo (n, (dp, cc, blockId)) =
       let lookupTableElemPtrName = concatAsName ["tmp_tbl_ptr", show n]
-          combo = 2*(fromEnum dp) + (fromEnum cc)
-      in [lookupTableElemPtrName :=
+          combo = 2 * (fromEnum dp) + (fromEnum cc)
+      in [ lookupTableElemPtrName :=
            GetElementPtr
            { inBounds = True
            , address =
                LocalReference
                  (PointerType
                   { pointerReferent =
-                      ArrayType {nArrayElements = 8, elementType = nextBlockFuncTy}
+                      ArrayType
+                      {nArrayElements = 8, elementType = nextBlockFuncTy}
                   , pointerAddrSpace = AddrSpace 0
                   })
                  (Name "funcArray")
@@ -228,7 +250,10 @@ defColorBlock c = GlobalDefinition functionDefaults
                [ ConstantOperand
                    (Const.Int {Const.integerBits = 32, Const.integerValue = 0})
                , ConstantOperand
-                   (Const.Int {Const.integerBits = 32, Const.integerValue = fromIntegral combo})
+                   (Const.Int
+                    { Const.integerBits = 32
+                    , Const.integerValue = fromIntegral combo
+                    })
                ]
            , metadata = []
            }
@@ -244,21 +269,22 @@ defColorBlock c = GlobalDefinition functionDefaults
                     lookupTableElemPtrName
               , value =
                   ConstantOperand
-                    (Const.GlobalReference nextBlockFuncTy (concatAsName ["ColorBlock", show blockId]))
+                    (Const.GlobalReference
+                       nextBlockFuncTy
+                       (concatAsName ["ColorBlock", show blockId]))
               , maybeAtomicity = Nothing
               , LLVM.AST.alignment = 8
               , metadata = []
-              })]
-
+              })
+         ]
     exitBlocks :: [BasicBlock]
-    exitBlocks = [
-          BasicBlock (concatAsName ["catch_exception"])
-            []
-            (Do $ Resume (ConstantOperand Const.TokenNone) []),
-          BasicBlock (concatAsName ["exit_normal"])
-            []
-            (Do $ Ret Nothing [])
-          ]
+    exitBlocks =
+      [ BasicBlock
+          (concatAsName ["catch_exception"])
+          []
+          (Do $ Resume (ConstantOperand Const.TokenNone) [])
+      , BasicBlock (concatAsName ["exit_normal"]) [] (Do $ Ret Nothing [])
+      ]
 
 createModule :: [AbsColorBlock] -> LLVM.AST.Module
 createModule blocks@(firstBlock:_) = defaultModule

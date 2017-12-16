@@ -29,7 +29,7 @@ main = do
 
   let colorBlocks = parse $ lexProg pietProg []
 
-  putStrLn "Color blocks:"
-  putStrLn $ show colorBlocks
+  --putStrLn "Color blocks:"
+  --putStrLn $ show colorBlocks
 
   toLLVM colorBlocks

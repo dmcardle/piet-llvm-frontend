@@ -12,8 +12,9 @@
     compile time!
 ** Codegen
    Emit an LLVM IR function for each color block.
-   
-
+*** TODO Create a constant vector/array for colors
+    The ~nextBlock()~ function needs to know the current block's color. I should
+    just make a global constant vector for block colors.
 * Cabal Cheat Sheet
     #+BEGIN_SRC sh
     # Build and run

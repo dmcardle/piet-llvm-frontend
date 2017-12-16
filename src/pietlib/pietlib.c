@@ -10,10 +10,7 @@ void nextBlock(int * stackPtr,
                char dp,
                char cc,
                void (*funcTable[8])(int*, char, char),
-               int oldHue,
-               int oldLightness,
-               int newHue,
-               int newLightness,
+               int colorTable[8],
                int curBlockNum) {
 
   int combo = 2*dp + cc;
@@ -21,9 +18,7 @@ void nextBlock(int * stackPtr,
   //
   // Print the lookup table.
   //
-  printf("In block %d\n\tcombo = %d\n\toldHue = %d\n\toldLightness = %d"
-         "\n\tnewHue = %d\n\tnewLightness = %d\n",
-         curBlockNum, combo, oldHue, oldLightness, newHue, newLightness);
+  printf("In block %d\n\tcombo = %d\n", curBlockNum, combo);
 
   int _dp, _cc;
   for (_dp=0; _dp<4; _dp++) {
@@ -43,8 +38,8 @@ void nextBlock(int * stackPtr,
 
 int main(int argc, char *argv[]) {
   int *stackPtr = &PietStack[0];
+  printf("!!! BEGIN EXECUTION !!!");
   ColorBlock1(stackPtr, 0, 0);
-
-  printf("Hello");
+  printf("!!! END OF EXECUTION !!!");
   return 0;
 }
