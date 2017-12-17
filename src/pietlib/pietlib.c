@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define COMBO(dp,cc) 2*dp + cc
+#define COMBO(dp,cc) (2*dp + cc)
 
 const int PIET_STACK_SIZE = 1000;
 const int NUM_STD_HUE = 6;
@@ -210,7 +210,7 @@ void nextBlock(int * stackPtr,
           int topVal = stackPop(&stackPtr);
 
           // Remove n=operand2 items
-          for (j=0; j<<operand2; j++) {
+          for (j=0; j < operand2-1; j++) {
             int p = stackPop(&stackPtr);
             stackPush(&shadowStackPtr, p);
           }
@@ -218,7 +218,7 @@ void nextBlock(int * stackPtr,
           stackPush(&stackPtr, topVal);
 
           // Restore original items
-          for (j=0; j<operand2; j++) {
+          for (j=0; j < operand2-1; j++) {
             int p = stackPop(&shadowStackPtr);
             stackPush(&stackPtr, p);
           }
