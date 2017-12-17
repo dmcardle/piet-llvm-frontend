@@ -1,4 +1,8 @@
 * Quickstart
+
+  The goal of this project is to compile programs written in the esoteric Piet
+  language into LLVM IR.
+
     #+BEGIN_SRC sh
     # Create Cabal sandbox
     cabal sandbox init
