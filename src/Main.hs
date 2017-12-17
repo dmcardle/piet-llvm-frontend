@@ -31,5 +31,6 @@ main = do
 
   --putStrLn "Color blocks:"
   --putStrLn $ show colorBlocks
+  writeFile "autogen_colorblocks.hs" (show colorBlocks)
 
   toLLVM colorBlocks
